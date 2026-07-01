@@ -14,7 +14,6 @@ from dotenv import load_dotenv
 import os
 import traceback
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -23,12 +22,18 @@ TOKEN = os.getenv("BOT_TOKEN")
 SHEET_ID = "1lB2XOye8C3dU-oXa3Xx7CmbSbr43FQeFkz5QQXVjLvg"
 
 GROUPS = [
-    "Танцы 6-10 лет", "Танцы 11-13 лет", "Танцы 14-16 лет",
-    "Самбо 4-6 лет", "Самбо 7+ лет", "Брейкинг 6+ лет"
+    "Танцы 6-10 лет", "Танцы 11-13 лет", "Танцы 14-16 лет", "Брейкинг 6+ лет"
 ]
 REMOVE = types.ReplyKeyboardRemove()
 AGE_MIN, AGE_MAX = 4, 17
 PHONE_MIN, PHONE_MAX = 11, 11
+
+AGE_LIMITS = {
+    "Танцы 6-10 лет": (6, 10),
+    "Танцы 11-13 лет": (11, 13),
+    "Танцы 14-16 лет": (14, 16),
+    "Брейкинг 6+ лет": (6, 17),
+}
 
 class TrialStates(StatesGroup):
     waiting_for_group = State()
@@ -77,7 +82,7 @@ async def send_and_set_state(message: Message, text: str, state: FSMContext, new
 async def start_command(message: Message, state: FSMContext):
     await message.answer(
         "Добрый день! Чтобы записать ребенка на первое занятие выберите направление:\n"
-        "- Танцы 6-10 лет\n- Танцы 11-13 лет\n- Танцы 14-16 лет\n- Самбо 4-6 \n- Самбо 7+ лет\n- Брейкинг 6+ лет",
+        "- Танцы 6-10 лет\n- Танцы 11-13 лет\n- Танцы 14-16 лет\n- Брейкинг 6+ лет",
         reply_markup=group_buttons
     )
     await state.set_state(TrialStates.waiting_for_group)
@@ -91,7 +96,7 @@ async def process_group(message: Message, state: FSMContext):
     await state.update_data(group=group)
     schedule = schedule_buttons.get(group)
     if schedule:
-        await send_and_set_state(message, "Выберите удобный день и время:", state, TrialStates.waiting_for_time, reply_markup=schedule)
+        await send_and_set_state(message, "Выберите удобный день и время: \n ‼️ЛЕТНЕЕ РАСПИСАНИЕ. C 1-го сентября расписание будет изменено ", state, TrialStates.waiting_for_time, reply_markup=schedule)
     else:
         await message.answer("В данный момент на данное направление нет расписания.", reply_markup=REMOVE)
         await state.clear()
@@ -111,7 +116,24 @@ async def process_time(message: Message, state: FSMContext):
         await message.answer("Пожалуйста, выберите время с помощью кнопок.")
         return
     await state.update_data(time=time)
-    await send_and_set_state(message, "Введите имя и фамилию ребёнка:", state, TrialStates.waiting_for_name, reply_markup=REMOVE)
+
+    if data.get("name"):
+        await send_and_set_state(message, "Введите возраст ребёнка:", state, TrialStates.waiting_for_age, reply_markup=REMOVE)
+    else:
+        await send_and_set_state(message, "Введите имя и фамилию ребёнка:", state, TrialStates.waiting_for_name, reply_markup=REMOVE)
+
+@dp.message(lambda msg: msg.text == "Сменить группу")
+async def change_group(message: Message, state: FSMContext):
+    data = await state.get_data()
+    name = data.get("name")
+    await state.clear()
+    if name:
+        await state.update_data(name=name)
+    await message.answer(
+        "Выберите направление заново:",
+        reply_markup=group_buttons
+    )
+    await state.set_state(TrialStates.waiting_for_group)
 
 @dp.message(TrialStates.waiting_for_name)
 async def process_name(message: Message, state: FSMContext):
@@ -124,12 +146,39 @@ async def process_name(message: Message, state: FSMContext):
 
 @dp.message(TrialStates.waiting_for_age)
 async def process_age(message: Message, state: FSMContext):
-    age = message.text.strip()
-    if not is_valid_age(age):
-        await message.answer(f"Пожалуйста, введите корректный возраст (от {AGE_MIN} до {AGE_MAX}).")
+    if message.text.strip() == "Сменить группу":
+        await change_group(message, state)
         return
+
+    age_str = message.text.strip()
+    if not age_str.isdigit():
+        await message.answer("Возраст должен быть числом. Попробуйте снова.")
+        return
+
+    age = int(age_str)
+    data = await state.get_data()
+    group = data.get("group")
+
+    min_age, max_age = AGE_LIMITS.get(group, (AGE_MIN, AGE_MAX))
+
+    if not (min_age <= age <= max_age):
+        await message.answer(
+            f"Для группы '{group}' допустимый возраст от {min_age} до {max_age} лет.\n"
+            f"Введите корректный возраст, либо смените группу\n",
+            reply_markup=types.ReplyKeyboardMarkup(
+                keyboard=[[types.KeyboardButton(text="Сменить группу")]],
+                resize_keyboard=True
+            )
+        )
+        return
+
     await state.update_data(age=age)
-    await send_and_set_state(message, "Укажите Ваш контактный номер телефона:", state, TrialStates.waiting_for_phone)
+    await send_and_set_state(
+        message,
+        "Укажите Ваш контактный номер телефона:",
+        state,
+        TrialStates.waiting_for_phone
+    )
 
 @dp.message(TrialStates.waiting_for_phone)
 async def process_phone(message: Message, state: FSMContext):
@@ -177,9 +226,9 @@ async def process_confirming(message: Message, state: FSMContext):
                     f"Приглашаем на занятие в:\n"
                     f"🗓️{data['time']}\n"
                     f"Подходить за 10 минут до начала.\n"
-                    f"📍Мы находимся по адресу ул. Уральских рабочих, 43, 2 этаж. Вход магазин Стомак/Магнит.\n"
-                    f"👟С собой сменная обувь - тапки/сланцы, бутылочка воды.\n"
-                    f"👕Одежда: футболка, шорты, носки/чешки. Для девочек - волосы собраны.\n"
+                    f"📍Мы находимся по адресу ул. Уральских рабочих, 50, 2 этаж. \n"
+                    f"👟С собой сменная обувь - кроссовки (желательно на светлой подошве), бутылочка воды. \n"
+                    f"👕Одежда: футболка, спортивные штаны. Для девочек - волосы собраны.\n"
                     f"✔️Стоимость первого занятия - 500₽\n\n"
                     f"📞При возникновении вопросов +79292165126\n"
                     f"🌐Наш VK https://vk.com/territory_pobed"
@@ -188,7 +237,7 @@ async def process_confirming(message: Message, state: FSMContext):
                 final_msg = (
                     f"Приглашаем на занятие в: \n🗓️{data['time']}\n"
                     f"Подходить за 10 минут до начала. \n"
-                    f"📍Мы находимся по адресу ул. Уральских рабочих, 43, 2 этаж. Вход магазин Стомак/Магнит.\n"
+                    f"📍Мы находимся по адресу ул. Уральских рабочих, 50, 2 этаж. \n"
                     f"👟С собой сменная обувь - кроссовки (желательно на светлой подошве), бутылочка воды. \n"
                     f"👕Одежда: футболка, спортивные штаны. Для девочек - волосы собраны.\n"
                     f"✔️Стоимость первого занятия - 500₽.\n\n"

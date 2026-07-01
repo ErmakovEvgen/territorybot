@@ -77,7 +77,7 @@ async def send_and_set_state(message: Message, text: str, state: FSMContext, new
 async def start_command(message: Message, state: FSMContext):
     await message.answer(
         "Добрый день! Чтобы записать ребенка на первое занятие выберите направление:\n"
-        "- Танцы 6-10 лет\n- Танцы 11-13 лет\n- Танцы 14-16 лет\n- Самбо НЕТ БОЛЬШЕ \n- Самбо 7+ лет\n- Брейкинг 6+ лет",
+        "- Танцы 6-10 лет\n- Танцы 11-13 лет\n- Танцы 14-16 лет\n- Самбо 4-6 \n- Самбо 7+ лет\n- Брейкинг 6+ лет",
         reply_markup=group_buttons
     )
     await state.set_state(TrialStates.waiting_for_group)
